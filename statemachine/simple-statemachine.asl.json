@@ -1,0 +1,11 @@
+{
+  "Comment": "Dummy Step Function",
+  "StartAt": "Dummy",
+  "States": {
+    "Dummy": {
+      "Type": "Task",
+      "Resource": "${DummyArn}",
+      "End": true
+    }
+  }
+}

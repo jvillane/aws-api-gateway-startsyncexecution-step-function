@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless Api Gateway that Starts Sync Execution of a Step Funtion
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 10
+    Handler: index.handler
+    Runtime: nodejs12.x
+    MemorySize: 128
+    Tracing: Active
+Resources:
+  ##########################################################################
+  #  Lambda functions                                                      #
+  ##########################################################################
+  Dummy:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/dummy/
+
+  ##########################################################################
+  #   STEP FUNCTION                                                        #
+  ##########################################################################
+
+  DummyStateMachineExpressSync:
+    Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
+    Properties:
+      DefinitionUri: statemachine/simple-statemachine.asl.json
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        DummyArn: !GetAtt Dummy.Arn
+      Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+        - LambdaInvokePolicy:
+            FunctionName: !Ref Dummy
+      Type: EXPRESS
+
+  ##########################################################################
+  #   HTTP API                                                             #
+  ##########################################################################
+
+  HttpApiforSyncWF:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: api
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200
+
+  HttpApiStepFunctionIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApiforSyncWF
+      CredentialsArn: !GetAtt HttpApiRole.Arn
+      Description: 'Start my step machine step function'
+      IntegrationType: AWS_PROXY
+      IntegrationSubtype: StepFunctions-StartSyncExecution
+      PayloadFormatVersion: "1.0"
+      RequestParameters:
+        Input: '$request.body'
+        StateMachineArn: !Ref DummyStateMachineExpressSync
+
+  HttpApiRoute:
+    DependsOn:
+      - HttpApiStepFunctionIntegration
+      - HttpApiforSyncWF
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApiforSyncWF
+      RouteKey: POST /start-stepfunction-sync
+      Target: !Join [ '/', [ 'integrations', !Ref HttpApiStepFunctionIntegration ] ]
+
+  ##########################################################################
+  #   Roles                                                               #
+  ##########################################################################
+  HttpApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: AllowSFNExec
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "states:StartSyncExecution"
+                Resource: !GetAtt DummyStateMachineExpressSync.Arn
+##########################################################################
+#   Outputs                                                              #
+##########################################################################
+Outputs:
+  HelloWorldApi:
+    Description: "Sync WF API endpoint"
+    Value: !Sub "https://${HttpApiforSyncWF}.execute-api.${AWS::Region}.amazonaws.com"
+
